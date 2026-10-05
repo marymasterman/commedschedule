@@ -333,8 +333,8 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
     if (fac.block.blockNum !== res.block.blockNum) {
       issues.push({ level: "hard", code: "block-mismatch", msg: `Block numbers differ: faculty file is Block #${fac.block.blockNum}, resident file is Block #${res.block.blockNum}.` });
     }
-    for (const code of ["BSC", "KAR", "SKB"]) {
-      if (!fac.facultyFound.includes(code)) issues.push({ level: "soft", code: "fac-missing", msg: `${code} was never found on the faculty grid — ${code === "BSC" ? "Dr. Carroll" : code === "KAR" ? "Dr. Ray" : "Dr. Beach"} will be treated as available all block. Double-check the faculty file.` });
+    for (const code of ["KAR", "SKB"]) {
+      if (!fac.facultyFound.includes(code)) issues.push({ level: "soft", code: "fac-missing", msg: `${code} was never found on the faculty grid — ${code === "KAR" ? "Dr. Ray" : "Dr. Beach"} will be treated as available all block. Double-check the faculty file.` });
     }
     const block = fac.block;
     const weeks = Math.max(fac.weeks, res.weeks);
@@ -354,14 +354,16 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
 
   /* ---------------- availability ---------------- */
   function facultyActs(model, code, slotKey) { return (model.fac.map[slotKey] || {})[code] || []; }
+  // Rotation lead = Dr. Ray (KAR). Free when blank or ADMIN; a PM BRONZE entry also counts as free
+  // (the Bronze-service afternoons rule carries over to whoever leads the rotation).
   function bscFree(model, slotKey) {
     const ampm = slotKey.split("|")[1];
-    const acts = facultyActs(model, "BSC", slotKey);
+    const acts = facultyActs(model, "KAR", slotKey);
     if (!acts.length) return true;
     return acts.every((a) => a === "ADMIN" || (ampm === "PM" && a === "BRONZE"));
   }
   function facFree(model, code, slotKey) {
-    if (code === "BSC") return bscFree(model, slotKey);
+    if (code === "KAR") return bscFree(model, slotKey);
     const acts = facultyActs(model, code, slotKey);
     return !acts.length || acts.every((a) => a === "ADMIN");
   }
@@ -407,6 +409,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
     { id: "g8", kind: "group", hours: 4, title: "Group: Community Assessment & Resource reports; free clinics & missions medicine" },
     { id: "kar", kind: "facspecial", hours: 2, faculty: "KAR", title: "Group: Community Medicine Impact in Rural Health — Dr. K. Ray (2 hr)" },
     { id: "skb", kind: "facspecial", hours: 2, faculty: "SKB", title: "Group: Genogram of home-visit patient; family dynamics — Dr. Beach (2 hr)", prefFriday: true },
+    { id: "imm", kind: "facspecial", hours: 2, faculty: "KAR", title: "Group: Immunization – Adult & Peds — Dr. Ray (2 hr)" },
     { id: "school", kind: "allres", hours: 3, title: "Skyline Middle School — school teaching presentation (Feisal Mahdi, faculty contact) (3 hr)", prefAM: true },
     { id: "ksa", kind: "togetherpref", hours: 4, title: "ABFM KSA: Health Counseling & Preventive Care (print certificate — graduation points)" },
     { id: "om1", kind: "per", hours: 4, occmed: true, title: "Occupational Medicine I (precepting w/ Dr. Estep)" },
@@ -457,7 +460,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
     place("wrap", "ALL", last);
     picks.forEach((r) => { load[r + "|" + last.key] = 4; });
 
-    // 3. Reserve group-eligible slots (all residents + BSC free) before placing specials
+    // 3. Reserve group-eligible slots (all residents + Dr. Ray free) before placing specials
     const NEED_GROUPS = 7; // g2..g8
     const gset = () => new Set(slots.filter((s) => freeAll(s, 4) && bscFree(model, s.key)).map((s) => s.key));
     let G = gset();
@@ -476,15 +479,20 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       return pick;
     };
 
+    // Immunization Adult & Peds (2 hr, Dr. Ray) — competes with group sessions for her free slots, so place first
+    takeSpecial("imm",
+      slots.filter((s) => freeAll(s, 2) && bscFree(model, s.key)),
+      (s) => 0);
+
     // SKB (2 hr) — Friday preferred, later in the block preferred (home visits done first)
     takeSpecial("skb",
       slots.filter((s) => freeAll(s, 2) && facFree(model, "SKB", s.key)),
       (s) => (s.dow === 4 ? 100 : 0) + s.week * 5 + (G.has(s.key) ? 0 : 4), 2);
 
-    // KAR (2 hr) — prefer a slot with a full 4 h free so the ATSDR module can follow (as in the sample)
+    // Rural Health (2 hr, Dr. Ray) — prefer a slot with a full 4 h free so the ATSDR module can follow (as in the sample)
     takeSpecial("kar",
       slots.filter((s) => freeAll(s, 2) && facFree(model, "KAR", s.key)),
-      (s) => (freeAll(s, 4) ? 50 : 0) + (G.has(s.key) ? 0 : 100) - s.week, 2,
+      (s) => (freeAll(s, 4) ? 100 : 0) - s.week, 2,
       (pick) => { picks.forEach((r) => { if (canTake(r, pick, 2)) place("atsdr", r, pick); }); });
 
     // School (3 hr, all residents, AM preferred)
@@ -504,7 +512,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       });
     }
 
-    // 4. Group sessions g2..g8 with BSC, spread across the block
+    // 4. Group sessions g2..g8 with Dr. Ray (KAR), spread across the block
     {
       const cands = slots.filter((s) => freeAll(s, 4) && bscFree(model, s.key));
       const need = ["g2", "g3", "g4", "g5", "g6", "g7", "g8"];
@@ -535,12 +543,19 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       const s2 = findOM([2, 3]); if (s2) place("om2", r, s2); else place("om2", r, null);
     });
 
-    // 6. FMC labels — align all three residents when possible
+    // 6. FMC labels — align all three residents when possible.
+    //    Each teaching label must land on a LATER day than the group session that covers its topic:
+    //    Community Resources & USPSTF → week-1 orientation (g1); Counseling & Health Literacy → MI & Counseling session (g6).
     {
       const shared = model.slots.filter((s) => !s.locked && picks.every((r) => residentFmcLabelable(model, r, s.key)));
+      const anchorOf = { fmc_cr: "g1", fmc_us: "g1", fmc_co: "g6", fmc_hl: "g6" };
+      const anchorDate = (lab) => { const a = A.find((x) => x.defId === anchorOf[lab] && x.slotKey); return a ? a.slotKey.split("|")[0] : null; };
+      const afterAnchor = (lab) => { const d = anchorDate(lab); return (s) => !d || s.dateIso > d; };
       const usedShared = new Set(); const usedWeeks = new Set();
       ["fmc_cr", "fmc_us", "fmc_co", "fmc_hl"].forEach((lab, li) => {
-        const avail = shared.filter((s) => !usedShared.has(s.key));
+        const ok = afterAnchor(lab);
+        const availAll = shared.filter((s) => !usedShared.has(s.key));
+        const avail = availAll.filter(ok).length ? availAll.filter(ok) : availAll;
         const pick = avail.find((s) => !usedWeeks.has(s.week)) || avail[0];
         if (pick) usedWeeks.add(pick.week);
         if (pick) {
@@ -548,7 +563,8 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
           place(lab, "ALL", pick, { aligned: true });
         } else {
           picks.forEach((r) => {
-            const own = model.slots.filter((s) => !s.locked && residentFmcLabelable(model, r, s.key) && !A.some((a) => DEF[a.defId].kind === "fmclabel" && a.slotKey === s.key && (a.resident === r || a.resident === "ALL")));
+            const ownAll = model.slots.filter((s) => !s.locked && residentFmcLabelable(model, r, s.key) && !A.some((a) => DEF[a.defId].kind === "fmclabel" && a.slotKey === s.key && (a.resident === r || a.resident === "ALL")));
+            const own = ownAll.filter(ok).length ? ownAll.filter(ok) : ownAll;
             if (own[li] || own[0]) place(lab, r, own[li] || own[0], { aligned: false });
             else place(lab, r, null, { aligned: false });
           });
@@ -627,7 +643,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       who.forEach((r) => {
         if (residentBusy(model, r, a.slotKey)) hard.push(`${r} is not available ${slotName(a.slotKey)} (${residentBusyText(model, r, a.slotKey)}) but is scheduled for: ${def.title}.`);
       });
-      if (def.kind === "group" && !bscFree(model, a.slotKey)) hard.push(`Dr. Carroll (BSC) is not available ${slotName(a.slotKey)} (${facultyActs(model, "BSC", a.slotKey).join(", ") || "?"}) but “${def.title}” is scheduled then.`);
+      if (def.kind === "group" && !bscFree(model, a.slotKey)) hard.push(`Dr. Ray (KAR) is not available ${slotName(a.slotKey)} (${facultyActs(model, "KAR", a.slotKey).join(", ") || "?"}) but “${def.title}” is scheduled then.`);
       if (def.faculty && !facFree(model, def.faculty, a.slotKey)) hard.push(`${def.faculty === "KAR" ? "Dr. Ray (KAR)" : "Dr. Beach (SKB)"} is not available ${slotName(a.slotKey)} (${facultyActs(model, def.faculty, a.slotKey).join(", ") || "?"}) but “${def.title}” is scheduled then.`);
     }
 
@@ -638,6 +654,21 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
     const firstKey = open[0] && open[0].key, lastKey = open.length && open[open.length - 1].key;
     if (firstKey && !assignments.some((a) => a.slotKey === firstKey && (DEF[a.defId].kind === "group"))) hard.push(`The very first half-day of the block (${slotName(firstKey)}) must be a group session — none is scheduled there.`);
     if (lastKey && !assignments.some((a) => a.slotKey === lastKey && a.defId === "wrap")) hard.push(`The very last half-day of the block (${slotName(lastKey)}) must be Independent Study wrap-up — it isn’t.`);
+
+    // Curriculum order: each FMC teaching day must come on a later day than the group session that covers its topic
+    const LABEL_ANCHORS = {
+      fmc_cr: ["g1", "the week-1 orientation group session"],
+      fmc_us: ["g1", "the week-1 orientation group session"],
+      fmc_co: ["g6", "the Motivational Interviewing & Counseling group session"],
+      fmc_hl: ["g6", "the Motivational Interviewing & Counseling group session"],
+    };
+    Object.entries(LABEL_ANCHORS).forEach(([lab, [anchorId, anchorName]]) => {
+      const anch = assignments.find((a) => a.defId === anchorId && a.slotKey);
+      if (!anch) return;
+      assignments.filter((a) => a.defId === lab && a.slotKey).forEach((a) => {
+        if (a.slotKey.split("|")[0] <= anch.slotKey.split("|")[0]) hard.push(`The ${DEF[lab].title.replace("FMC — ", "FMC ")} teaching day (${slotName(a.slotKey)}${a.resident !== "ALL" ? ", " + a.resident : ""}) must fall on a later day than ${anchorName} (${slotName(anch.slotKey)}) — residents cover the topic in the session first. Move one of them.`);
+      });
+    });
 
     const skbA = assignments.find((a) => a.defId === "skb" && a.slotKey);
     if (skbA && slotBy[skbA.slotKey] && slotBy[skbA.slotKey].dow !== 4) soft.push(`Dr. Beach’s session is on ${slotName(skbA.slotKey)} — it is usually held on a Friday.`);
@@ -659,7 +690,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
     LINKS, DEFS, DEF, generate, computeWarnings };
 });
 </script>
-<script>/* Community Medicine Scheduler — .docx builder v2: mimics Dr. Carroll's sample schedule wording & layout. UMD. */
+<script>/* Community Medicine Scheduler — .docx builder v2: mimics the original sample schedule wording & layout. UMD. */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
   else root.CMDocx = factory();
@@ -728,7 +759,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       const am = AM(key);
       switch (defId) {
         case "g1": return [
-          { t: "Group Session – Dr. Carroll", b: true },
+          { t: "Group Session – Dr. Ray", b: true },
           { t: am ? "09:30 am – 12:00 pm" : "1:15 – 3:45 pm" },
           { t: "Intro to Comm. Medicine" },
           { t: "Curriculum Review" }, { t: "Schedule Review" },
@@ -745,7 +776,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
         ];
         case "g3": return [
           { t: "Group Session – ALL", b: true },
-          { t: "Dr. Carroll", b: true },
+          { t: "Dr. Ray", b: true },
           { t: (am ? "8:45 – 10:45 am" : "1:45 – 3:45 pm") + ": Comm Assessment OKC" },
           { t: "Intro to Vaccines" },
           { t: "  ", link: { u: LINKS.vac1.u, t: LINKS.vac1.t, display: LINKS.vac1.u }, small: true },
@@ -756,7 +787,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
           { t: "Community Mission of SAH", gap: true },
         ];
         case "g4": return [
-          { t: "Group Session – Dr. Carroll", b: true },
+          { t: "Group Session – Dr. Ray", b: true },
           { t: am ? "8:45 am – 12:00 pm" : "1:15 – 4:30 pm" },
           { t: "Discuss Phys. Wellness" },
           { t: "Human Trafficking Education" },
@@ -764,7 +795,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
         ];
         case "g5": return [
           { t: "Pre-session Prep: EPIC SlicerDicer tutorial – complete online in Epic", i: true, small: true },
-          { t: "GROUP SESSION – Dr. Carroll", b: true },
+          { t: "GROUP SESSION – Dr. Ray", b: true },
           { t: am ? "8:45 am – 12:00 pm" : "1:15 – 4:30 pm" },
           { t: "Disparities in Health Care:" },
           { t: "Colorectal screening by ethnicity" },
@@ -772,19 +803,19 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
           { t: "Disparities in Health Care – definitions; ColoRectal screening article", small: true, gap: true },
         ];
         case "g6": return [
-          { t: "Group Session – Dr. Carroll", b: true },
+          { t: "Group Session – Dr. Ray", b: true },
           { t: "Pre-session prep: read “Realistic Approach to Counseling in the Office” article in Workbook", i: true, small: true },
           { t: (am ? "8:45 – 11:50 am" : "1:15 pm – 4:30 pm") + " –" },
           { t: "Motivational Interviewing & Counseling, Health Literacy Topics", gap: true },
         ];
         case "g7": return [
-          { t: "Group Session – Dr. Carroll", b: true },
+          { t: "Group Session – Dr. Ray", b: true },
           { t: "ALL: " + (am ? "08:45 – 11:50 am" : "1:15 – 4:30 pm") },
           { t: "Patient Safety" },
           { t: "Occ Med / toxin presentations", gap: true },
         ];
         case "g8": return [
-          { t: "Group Session – Dr. Carroll", b: true },
+          { t: "Group Session – Dr. Ray", b: true },
           { t: "ALL: " + (am ? "08:45 – 11:50 am" : "1:15 – 4:30 pm") },
           { t: "Community Assessm’t & Resource Reports &" },
           { t: "Free Clinics & Missions Med", gap: true },
@@ -794,6 +825,12 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
           { t: "Dr. K. RAY – Faculty Leader", b: true },
           { t: "Community Medicine Impact in Rural Health" },
           { t: am ? "9:30 – 11:00 am" : "1:30 – 3:00 pm", gap: true },
+        ];
+        case "imm": return [
+          { t: "Group Session – Dr. Ray", b: true },
+          { t: am ? "10:00 am – 12:00 pm" : "1:30 – 3:30 pm" },
+          { t: "Immunization –" },
+          { t: "Adult & Peds", gap: true },
         ];
         case "skb": return [
           { t: am ? "9:30 – 11:30 am" : "1:30 – 3:30 pm" },
@@ -888,7 +925,7 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       const list = bySlot[slot.key] || [];
       const lines = [];
       // 1. group-style sessions in a stable order
-      const gdefs = ["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8", "kar", "skb", "school", "ksa", "wrap"];
+      const gdefs = ["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8", "kar", "imm", "skb", "school", "ksa", "wrap"];
       for (const id of gdefs) if (list.some((a) => a.defId === id)) lines.push(...groupLines(id, slot.key));
       // 2. per-resident sessions, merged to ALL when every resident shares the slot
       for (const id of PER_ORDER) {
@@ -976,11 +1013,11 @@ td.lockedcell{background:repeating-linear-gradient(-45deg,#F2F4F3 0 8px,#EDF0EF 
       "Pick up from Mrs. Shirley, at her desk, please.",
       "You will need online access, laptop & this workbook to complete assignments, throughout the rotation.",
       "There are several off-campus activities - exciting!",
-      "Please text or call me for questions: Dr. Bella Carroll: 580-215-8873 cell",
+      "Please text or call me for questions: Dr. K. Ray: 580-334-8068 cell",
       "Assigned topics are covered in the rotation overview or the workbook, which we will review in person, at our Group Sessions.",
     ].forEach((n) => body.push(para(run(n, { sz: 19 }), { spaceAfter: 30 })));
     body.push(para(run("OCC MED scheduled precepting w/ Dr. Estep: ", { b: true, sz: 19 }) + run("check schedule & save as calendar reminders", { sz: 19 }), { spaceBefore: 100, spaceAfter: 30 }));
-    body.push(para(run("If the preceptor is not available as assigned, please reschedule with their office in this block, & email Drs. Estep & Carroll of the change. (only 1 resident per half-day) Swap activities as needed not to fall behind.", { sz: 19 }), { spaceAfter: 30 }));
+    body.push(para(run("If the preceptor is not available as assigned, please reschedule with their office in this block, & email Drs. Estep & Ray of the change. (only 1 resident per half-day) Swap activities as needed not to fall behind.", { sz: 19 }), { spaceAfter: 30 }));
 
     const sect = `<w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:pgMar w:top="700" w:right="800" w:bottom="700" w:left="800" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`;
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -1042,6 +1079,7 @@ const SHORT = {
   g8: "Group 8 · Assessment & Resource reports",
   kar: "Rural Health — Dr. Ray (2 hr)",
   skb: "Genogram / Family — Dr. Beach (2 hr)",
+  imm: "Immunization · Adult & Peds — Dr. Ray (2 hr)",
   school: "Skyline Middle School (3 hr)",
   ksa: "ABFM KSA · Counseling & Prevention",
   om1: "Occ Med I — Dr. Estep",
@@ -1058,7 +1096,7 @@ const SHORT = {
   fmc_hl: "FMC · Health Literacy",
   is: "Independent Study"
 };
-const NOTES = ["Community Medicine workbooks: pick up from Mrs. Shirley at her desk. You will need online access, a laptop and the workbook to complete assignments throughout the rotation.", "Questions: Dr. Bella Carroll — cell 580-215-8873.", "Occupational Medicine precepting with Dr. Estep: check the schedule and save calendar reminders. Only 1 resident per half-day. If the preceptor is unavailable as assigned, reschedule with their office within the block and email Drs. Estep & Carroll about the change. Swap activities as needed so you don't fall behind.", "Independent Study time is for rotation modules, presentations and portfolio work."];
+const NOTES = ["Community Medicine workbooks: pick up from Mrs. Shirley at her desk. You will need online access, a laptop and the workbook to complete assignments throughout the rotation.", "Occupational Medicine precepting with Dr. Estep: check the schedule and save calendar reminders. Only 1 resident per half-day. If the preceptor is unavailable as assigned, reschedule with their office within the block and email Drs. Estep & Ray about the change. Swap activities as needed so you don't fall behind.", "Independent Study time is for rotation modules, presentations and portfolio work."];
 function readGrid(file, cb, err) {
   const fr = new FileReader();
   fr.onload = () => {
@@ -1135,7 +1173,7 @@ function FileCard({
     className: "err"
   }, error), parsed && !error && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
     className: "ok"
-  }, "✓ ", parsed.fileName), /*#__PURE__*/React.createElement("div", null, "Block #", parsed.block.blockNum, " · ", C.fmtShort(parsed.block.start), " – ", C.fmtShort(parsed.block.end), " · ", parsed.weeks, " weeks"))));
+  }, "\u2713 ", parsed.fileName), /*#__PURE__*/React.createElement("div", null, "Block #", parsed.block.blockNum, " \xB7 ", C.fmtShort(parsed.block.start), " \u2013 ", C.fmtShort(parsed.block.end), " \xB7 ", parsed.weeks, " weeks"))));
 }
 
 /* ---------- schedule chip ---------- */
@@ -1179,7 +1217,7 @@ function Chip({
     className: "x no-print",
     title: "Move to tray (unschedule)",
     onClick: () => onRemove(a)
-  }, "✕"));
+  }, "\u2715"));
 }
 
 /* ---------- main app ---------- */
@@ -1389,13 +1427,13 @@ function App() {
     className: "banner no-print"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "kicker"
-  }, "Family Medicine Residency · SSM Health St. Anthony"), /*#__PURE__*/React.createElement("h1", null, "Community Medicine Rotation Scheduler")), model && /*#__PURE__*/React.createElement("div", {
+  }, "Family Medicine Residency \xB7 SSM Health St. Anthony"), /*#__PURE__*/React.createElement("h1", null, "Community Medicine Rotation Scheduler")), model && /*#__PURE__*/React.createElement("div", {
     className: "blockcard"
   }, /*#__PURE__*/React.createElement("div", {
     className: "blocknum disp"
   }, "BLOCK #", model.block.blockNum), /*#__PURE__*/React.createElement("div", {
     className: "blockdates"
-  }, C.fmtShort(model.block.start), " – ", C.fmtShort(model.block.end), " · ", model.weeks, " weeks"))), /*#__PURE__*/React.createElement("nav", {
+  }, C.fmtShort(model.block.start), " \u2013 ", C.fmtShort(model.block.end), " \xB7 ", model.weeks, " weeks"))), /*#__PURE__*/React.createElement("nav", {
     className: "stepper no-print"
   }, /*#__PURE__*/React.createElement("button", {
     className: "step" + (step === 0 ? " on" : ""),
@@ -1414,13 +1452,13 @@ function App() {
     className: "cards"
   }, /*#__PURE__*/React.createElement(FileCard, {
     title: "Faculty schedule",
-    sub: "The block's faculty grid (e.g. 2026-27 FBLK 2.xls) — used for Dr. Carroll, Dr. Ray and Dr. Beach's availability.",
+    sub: "The block's faculty grid (e.g. 2026-27 FBLK 2.xls) \u2014 used for Dr. Ray and Dr. Beach's availability.",
     parsed: facRaw && !facRaw.error ? facRaw : null,
     error: facRaw && facRaw.error,
     onFile: f => handleFile("fac", f)
   }), /*#__PURE__*/React.createElement(FileCard, {
     title: "Resident FMC schedule",
-    sub: "The block's resident clinic grid (e.g. 2026-27 Rblk 2 FMC.xls) — used for resident availability and FMC clinic days.",
+    sub: "The block's resident clinic grid (e.g. 2026-27 Rblk 2 FMC.xls) \u2014 used for resident availability and FMC clinic days.",
     parsed: resRaw && !resRaw.error ? resRaw : null,
     error: resRaw && resRaw.error,
     onFile: f => handleFile("res", f)
@@ -1438,12 +1476,12 @@ function App() {
     className: "filemeta"
   }, /*#__PURE__*/React.createElement("span", {
     className: "ok"
-  }, "✓ Dates line up in both files, and both cover Block #", model.block.blockNum, ".")), fileIssues.map((i, k) => /*#__PURE__*/React.createElement("div", {
+  }, "\u2713 Dates line up in both files, and both cover Block #", model.block.blockNum, ".")), fileIssues.map((i, k) => /*#__PURE__*/React.createElement("div", {
     key: k,
     className: "issue" + (i.level === "hard" ? " hard" : "")
   }, i.msg)), /*#__PURE__*/React.createElement("div", {
     className: "facchips"
-  }, [["BSC", "Dr. Carroll"], ["KAR", "Dr. Ray"], ["SKB", "Dr. Beach"]].map(([c, n]) => /*#__PURE__*/React.createElement("span", {
+  }, [["KAR", "Dr. Ray"], ["SKB", "Dr. Beach"]].map(([c, n]) => /*#__PURE__*/React.createElement("span", {
     key: c,
     className: "facchip" + (model.fac.facultyFound.includes(c) ? "" : " miss")
   }, model.fac.facultyFound.includes(c) ? "✓" : "?", " ", n, " (", c, ")"))), /*#__PURE__*/React.createElement("div", {
@@ -1453,17 +1491,17 @@ function App() {
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn primary",
     onClick: () => setStep(1)
-  }, "Continue to residents →"))), /*#__PURE__*/React.createElement("div", {
+  }, "Continue to residents \u2192"))), /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       marginTop: 18
     }
   }, /*#__PURE__*/React.createElement("h3", null, "Or resume earlier work"), /*#__PURE__*/React.createElement("div", {
     className: "sub"
-  }, "Load a saved schedule file (.json) — it carries the schedules and your edits, so you don’t need the .xls files again."), /*#__PURE__*/React.createElement("button", {
+  }, "Load a saved schedule file (.json) \u2014 it carries the schedules and your edits, so you don\u2019t need the .xls files again."), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => loadInp.current.click()
-  }, "Load saved schedule…"))), step === 1 && model && /*#__PURE__*/React.createElement("div", {
+  }, "Load saved schedule\u2026"))), step === 1 && model && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("h3", null, "Who is on Community Medicine this block?"), /*#__PURE__*/React.createElement("div", {
     className: "sub"
@@ -1489,7 +1527,7 @@ function App() {
     className: "btn primary",
     disabled: picks.length !== 3,
     onClick: () => setStep(2)
-  }, "Continue →"), picks.length === 3 && assignments.length > 0 && /*#__PURE__*/React.createElement("span", {
+  }, "Continue \u2192"), picks.length === 3 && assignments.length > 0 && /*#__PURE__*/React.createElement("span", {
     className: "sub"
   }, "Changing residents? Regenerate the schedule afterward."))), step === 2 && canSchedule && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "toolbar no-print"
@@ -1529,7 +1567,7 @@ function App() {
     className: "wpill soft"
   }, warnings.soft.length, " suggestion", warnings.soft.length > 1 ? "s" : ""), assignments.length > 0 && warnings.hard.length === 0 && warnings.soft.length === 0 && /*#__PURE__*/React.createElement("span", {
     className: "wpill clean"
-  }, "✓ no conflicts"))), !assignments.length && /*#__PURE__*/React.createElement("div", {
+  }, "\u2713 no conflicts"))), !assignments.length && /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       textAlign: "center",
@@ -1540,7 +1578,7 @@ function App() {
     style: {
       marginBottom: 16
     }
-  }, picks.join(" · "), " — the scheduler places all group sessions, Occ Med, school teaching, FMC teaching labels and independent modules around everyone’s clinic obligations."), /*#__PURE__*/React.createElement("button", {
+  }, picks.join(" · "), " \u2014 the scheduler places all group sessions, Occ Med, school teaching, FMC teaching labels and independent modules around everyone\u2019s clinic obligations."), /*#__PURE__*/React.createElement("button", {
     className: "btn primary",
     onClick: doGenerate
   }, "Generate schedule")), assignments.length > 0 && /*#__PURE__*/React.createElement("div", {
@@ -1554,7 +1592,7 @@ function App() {
       key: w
     }, /*#__PURE__*/React.createElement("h3", {
       className: "disp"
-    }, "Week ", w + 1, " · ", C.fmtShort(wkSlots[0].date), " – ", C.fmtShort(wkSlots[wkSlots.length - 1].date)), /*#__PURE__*/React.createElement("table", {
+    }, "Week ", w + 1, " \xB7 ", C.fmtShort(wkSlots[0].date), " \u2013 ", C.fmtShort(wkSlots[wkSlots.length - 1].date)), /*#__PURE__*/React.createElement("table", {
       className: "grid"
     }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
       className: "side"
@@ -1592,8 +1630,8 @@ function App() {
         onDrop: e => onDrop(e, key)
       }, /*#__PURE__*/React.createElement("span", {
         className: "bscdot no-print",
-        title: "Dr. Carroll " + (C.bscFree(model, key) ? "is free" : "is busy: " + (C.facultyActs(model, "BSC", key).join(", ") || "?"))
-      }, C.bscFree(model, key) ? /*#__PURE__*/React.createElement("b", null, "BSC ✓") : "BSC ✗"), (bySlot[key] || []).map(a => /*#__PURE__*/React.createElement(Chip, {
+        title: "Dr. Ray " + (C.bscFree(model, key) ? "is free" : "is busy: " + (C.facultyActs(model, "KAR", key).join(", ") || "?"))
+      }, C.bscFree(model, key) ? /*#__PURE__*/React.createElement("b", null, "KAR \u2713") : "KAR ✗"), (bySlot[key] || []).map(a => /*#__PURE__*/React.createElement(Chip, {
         key: a.id,
         a: a,
         def: C.DEF[a.defId],
@@ -1624,7 +1662,7 @@ function App() {
     style: {
       fontSize: 12.5
     }
-  }, "None — everything fits.") : /*#__PURE__*/React.createElement("ul", {
+  }, "None \u2014 everything fits.") : /*#__PURE__*/React.createElement("ul", {
     className: "wlist"
   }, warnings.hard.map((w, i) => /*#__PURE__*/React.createElement("li", {
     key: i
@@ -1669,14 +1707,14 @@ function App() {
     style: {
       background: "var(--teal)"
     }
-  }), " Group session (all + Dr. Carroll)"), /*#__PURE__*/React.createElement("div", {
+  }), " Group session (all + Dr. Ray)"), /*#__PURE__*/React.createElement("div", {
     className: "row"
   }, /*#__PURE__*/React.createElement("span", {
     className: "sw",
     style: {
       background: "#C9922A"
     }
-  }), " Dr. Ray / Dr. Beach session"), /*#__PURE__*/React.createElement("div", {
+  }), " 2-hr faculty session (Ray / Beach)"), /*#__PURE__*/React.createElement("div", {
     className: "row"
   }, /*#__PURE__*/React.createElement("span", {
     className: "sw",
@@ -1714,7 +1752,7 @@ function App() {
       marginTop: 8,
       color: "var(--muted)"
     }
-  }, "Gray tags show existing clinic obligations. BSC ✓/✗ = Dr. Carroll free/busy.")))))), /*#__PURE__*/React.createElement("input", {
+  }, "Gray tags show existing clinic obligations. KAR \u2713/\u2717 = Dr. Ray free/busy.")))))), /*#__PURE__*/React.createElement("input", {
     ref: loadInp,
     type: "file",
     accept: ".json",
@@ -1733,7 +1771,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "modal",
     onClick: e => e.stopPropagation()
-  }, /*#__PURE__*/React.createElement("h3", null, "Regenerate the schedule?"), /*#__PURE__*/React.createElement("p", null, "This rebuilds the whole block from scratch and replaces any drag-and-drop edits you’ve made. Save first if you want to keep the current version."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("h3", null, "Regenerate the schedule?"), /*#__PURE__*/React.createElement("p", null, "This rebuilds the whole block from scratch and replaces any drag-and-drop edits you\u2019ve made. Save first if you want to keep the current version."), /*#__PURE__*/React.createElement("div", {
     className: "actions"
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -1756,7 +1794,7 @@ function App() {
     style: {
       color: "var(--hard)"
     }
-  }, "⚠ ", modal.W.hard.length, " conflict", modal.W.hard.length > 1 ? "s" : "", " need attention"), /*#__PURE__*/React.createElement("ul", {
+  }, "\u26A0 ", modal.W.hard.length, " conflict", modal.W.hard.length > 1 ? "s" : "", " need attention"), /*#__PURE__*/React.createElement("ul", {
     className: "wlist"
   }, modal.W.hard.map((w, i) => /*#__PURE__*/React.createElement("li", {
     key: i
@@ -1771,7 +1809,7 @@ function App() {
     key: i
   }, w)))), /*#__PURE__*/React.createElement("p", {
     className: "sub"
-  }, "Fix conflicts by dragging sessions to other half-days — the panels update live."), /*#__PURE__*/React.createElement("div", {
+  }, "Fix conflicts by dragging sessions to other half-days \u2014 the panels update live."), /*#__PURE__*/React.createElement("div", {
     className: "actions"
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn primary",
